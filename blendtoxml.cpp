@@ -83,12 +83,10 @@ void BlendToXml::run()
             stream.setByteOrder(QDataStream::BigEndian);
         }
 
-        out.writeStartElement("header");
         out.writeAttribute("identifier", identifier);
         out.writeAttribute("pointer-size", QString::number(ptrSize));
         out.writeAttribute("endianness", QString(endianness));
         out.writeAttribute("version-number", readString<3>());
-        out.writeEndElement();
     }
 
     while (!stream.atEnd()) {
