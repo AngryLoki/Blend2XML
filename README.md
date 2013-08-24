@@ -56,3 +56,4 @@ Example output:
 
 Note that `blend2xml` does not print pointers: it is mostly useless, because blender changes pointers on each save.
 
+Also note, that this tool produces huge XML files. Some editors won't be able to open 10 MB of XML.
