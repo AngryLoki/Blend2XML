@@ -1,7 +1,9 @@
 Blend2XML
 =========
 
-Tool that converts [Blender 3D](http://www.blender.org/) files into human-readable XML. Compile with `qmake && make`.
+Command-line tool that converts [Blender 3D](http://www.blender.org/) files into human-readable XML. 
+
+Requires Qt Core and Qt XML libraries. Compile with `qmake && make`.
 
 Usage
 -----
@@ -10,10 +12,10 @@ Usage
 blend2xml filename.blend > output.xml
 ```
 
-Example output
---------------
+Example output:
 
 ```xml
+<?xml version="1.0" encoding="UTF-8"?>
 <blend>
     <header identifier="BLENDER" pointer-size="8" endianness="v" version-number="268"/>
     <REND sdna="Link">
