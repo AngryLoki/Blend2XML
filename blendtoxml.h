@@ -20,6 +20,8 @@
 #ifndef BLENDTOXML_H
 #define BLENDTOXML_H
 
+#include <inttypes.h>
+
 #include <QString>
 #include <QDataStream>
 #include <QStringList>
@@ -64,7 +66,7 @@ class BlendToXml : public QObject
 {
     Q_OBJECT
 public:
-    explicit BlendToXml(QIODevice *in, QIODevice *out, QObject *parent = 0);
+    explicit BlendToXml(QIODevice *in, QIODevice *out, bool notypes, bool nodata, bool printRawPointers, QObject *parent = 0);
     
 public slots:
     void run();
@@ -73,8 +75,13 @@ signals:
     void finished();
 
 private:
+    const uint32_t NOTYPE = 0xFFFFFFFF;
+
     QIODevice *m_in;
     QIODevice *m_out;
+    bool notypes;
+    bool nodata;
+    bool printRawPointers;
 
     QDataStream stream;
     uint8_t ptrSize;
@@ -83,7 +90,7 @@ private:
     QStringList names;
     QStringList typenames;
     QList<uint16_t> typelengths;
-    QList<int32_t> typestructures;
+    QList<uint32_t> typestructures;
     QList<Structure> structures;
 
     QString readString(std::size_t len);

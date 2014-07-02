@@ -9,4 +9,4 @@ TEMPLATE = app
 SOURCES += main.cpp blendtoxml.cpp
 HEADERS +=  blendtoxml.h
 
-QMAKE_CXXFLAGS += -std=c++11
+CONFIG += c++11

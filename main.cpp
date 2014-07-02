@@ -17,52 +17,78 @@
  * ***** END GPL LICENSE BLOCK *****
  */
 
-#include <QFile>
 #include <cstdio>
+
+#include <QFile>
 #include <QTimer>
 #include <QTextStream>
 #include <QCoreApplication>
+#include <QCommandLineParser>
 
 #include "blendtoxml.h"
 
-namespace {
-class BlendToXmlApplication : public QCoreApplication
-{
-public:
-    BlendToXmlApplication(int &argc, char **argv) :
-        QCoreApplication(argc, argv)
-    {}
-
-    static int exec()
-    {
-        QTextStream qerr(stderr);
-
-        auto args = QCoreApplication::arguments();
-        if (args.count() != 2) {
-            qerr << "Usage: blend2xml input.blend > output.xml\n";
-            return 1;
-        }
-
-        QFile file(args[1]);
-        if (!file.open(QIODevice::ReadOnly)) {
-            qerr << "open: unable to open file " << args[1] << "\n";
-            return 1;
-        }
-
-        QFile outFile;
-        outFile.open(stdout, QIODevice::WriteOnly);
-        BlendToXml *task = new BlendToXml(&file, &outFile);
-        QObject::connect(task, SIGNAL(finished()), instance(), SLOT(quit()));
-        QTimer::singleShot(0, task, SLOT(run()));
-
-        return QCoreApplication::exec();
-    }
-};
-
-}
-
 int main(int argc, char *argv[])
 {
-    BlendToXmlApplication app(argc, argv);
+    QCoreApplication app(argc, argv);
+
+    QCoreApplication::setApplicationName("blend2xml");
+    QCoreApplication::setApplicationVersion("1.0");
+
+    QCommandLineParser parser;
+    parser.addHelpOption();
+    parser.addVersionOption();
+    parser.addPositionalArgument("source", "Source .blend file.");
+
+    QCommandLineOption outputOption(QStringList() << "o" << "output", "Destination .xml file.", "file");
+    parser.addOption(outputOption);
+
+    QCommandLineOption notypesOption("notypes", "Disable type info.");
+    parser.addOption(notypesOption);
+
+    QCommandLineOption nodataOption("nodata", QCoreApplication::translate("main", "Disable data info."));
+    parser.addOption(nodataOption);
+
+    QCommandLineOption printRawPointersOption("rawpointers", QCoreApplication::translate("main", "Print raw pointers."));
+    parser.addOption(printRawPointersOption);
+
+    parser.process(*qApp);
+
+    const QStringList args = parser.positionalArguments();
+    if (args.count() != 1) {
+        parser.showHelp(1);
+    }
+
+    QTextStream qerr(stderr);
+
+    QFile file(args[0]);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qerr << QString("open %1: %2\n").arg(args[0], file.errorString());
+        return 1;
+    }
+
+    QString outputPath = parser.value(outputOption);
+
+    QFile outFile;
+
+    if (outputPath.isEmpty()) {
+        outFile.open(stdout, QIODevice::WriteOnly);
+    } else {
+        outFile.setFileName(outputPath);
+        outFile.open(QIODevice::WriteOnly);
+    }
+
+    if (outFile.error() != QFileDevice::NoError) {
+        qerr << "open:" << outFile.errorString() << "\n";
+        return 1;
+    }
+
+    bool notypes = parser.isSet(notypesOption);
+    bool nodata = parser.isSet(nodataOption);
+    bool printRawPointers = parser.isSet(printRawPointersOption);
+
+    BlendToXml *task = new BlendToXml(&file, &outFile, notypes, nodata, printRawPointers);
+    QObject::connect(task, &BlendToXml::finished, &app, &QCoreApplication::quit);
+    QTimer::singleShot(0, task, SLOT(run()));
+
     return app.exec();
 }

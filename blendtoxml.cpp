@@ -22,11 +22,12 @@
 #include <memory>
 #include <QRegExp>
 #include <QXmlStreamWriter>
+#include <QRegularExpression>
 
 CombType::CombType(const QString &name)
     : isPointer(false), width(1), height(1)
 {
-    isPointer = name.startsWith(QChar('*'));
+    isPointer = name.startsWith('*');
 
     if (isPointer) {
         printType = "*";
@@ -53,8 +54,9 @@ CombType::CombType(const QString &name)
     }
 }
 
-BlendToXml::BlendToXml(QIODevice *in, QIODevice *out, QObject *parent) :
-    QObject(parent), m_in(in), m_out(out), ptrSize(0)
+BlendToXml::BlendToXml(QIODevice *in, QIODevice *out, bool notypes, bool nodata, bool printRawPointers, QObject *parent) :
+    QObject(parent), m_in(in), m_out(out),
+    notypes(notypes), nodata(nodata), printRawPointers(printRawPointers), ptrSize(0)
 {}
 
 void BlendToXml::run()
@@ -115,19 +117,26 @@ void BlendToXml::run()
 
             readAlignedIdent("TLEN");
             for (size_t i = 0; i < types; i++) {
-                typelengths << readType<uint16_t>();
+                auto typelength = readType<uint16_t>();
+#if 0
+                if (typelength % 4) {
+                    qFatal(qPrintable(QString("Invalid structure length %1").arg(typelength)));
+                }
+                typelength /= 4;
+#endif
+                typelengths << typelength;
             }
 
             for (size_t i = 0; i < types; i++) {
-                typestructures.append(-1);
+                typestructures.append(NOTYPE);
             }
 
             readAlignedIdent("STRC");
             auto structuresCount = readType<uint32_t>();
-            for (size_t i = 0; i < structuresCount; i++) {
+            for (uint32_t i = 0; i < structuresCount; i++) {
                 Structure s;
                 s.type = readType<uint16_t>();
-                Q_ASSERT(typestructures[s.type] == -1);
+                Q_ASSERT(typestructures[s.type] == NOTYPE);
                 typestructures[s.type] = i;
                 auto fields = readType<uint16_t>();
                 for (size_t j = 0; j < fields; j++) {
@@ -145,51 +154,53 @@ void BlendToXml::run()
         }
     }
 
-#ifdef PRINT_TYPES
-    out.writeStartElement("types");
-    for (int i = 0; i < typenames.length(); i++) {
+    if (!notypes) {
+        out.writeStartElement("types");
+        for (int i = 0; i < typenames.length(); i++) {
             out.writeStartElement("type");
             out.writeAttribute("name", typenames[i]);
             out.writeAttribute("length", QString::number(typelengths[i]));
             out.writeEndElement();
-    }
-    out.writeEndElement();
+        }
+        out.writeEndElement();
 
-    out.writeStartElement("structures");
-    for (const auto &structure : structures) {
-        out.writeStartElement("structure");
-        out.writeAttribute("type", typenames[structure.type]);
-        out.writeAttribute("size", QString::number(typelengths[structure.type]));
-        for (const auto &field : structure.fields) {
-            out.writeStartElement("field");
-            out.writeAttribute("type", typenames[field.type]);
-            out.writeAttribute("name", names[field.name]);
+        out.writeStartElement("structures");
+        for (const auto &structure : structures) {
+            out.writeStartElement("structure");
+            out.writeAttribute("type", typenames[structure.type]);
+            out.writeAttribute("size", QString::number(typelengths[structure.type]));
+            for (const auto &field : structure.fields) {
+                out.writeStartElement("field");
+                out.writeAttribute("type", typenames[field.type]);
+                out.writeAttribute("name", names[field.name]);
+                out.writeEndElement();
+            }
             out.writeEndElement();
         }
         out.writeEndElement();
     }
-    out.writeEndElement();
-#endif
 
-    for (const Block &block : blocks) {
-        m_in->seek(block.pos);
-        out.writeStartElement(block.name);
+    if (!nodata) {
+        for (const Block &block : blocks) {
+            m_in->seek(block.pos);
+            out.writeStartElement(typenames[structures[block.sdnaIndex].type]);
+            out.writeAttribute("block", block.name);
 
-        out.writeAttribute("sdna", typenames[structures[block.sdnaIndex].type]);
-#ifdef PRINT_RAW_POINTERS
-        out.writeAttribute("old-memory-address", QString::number(block.oldMemoryAddress, 16));
-#endif
-
-        for (size_t i = 0; i < block.count; i++) {
-            if (block.count != 1) {
-                out.writeStartElement("elem");
+            if (printRawPointers) {
+                out.writeAttribute("old-memory-address", QString::number(block.oldMemoryAddress, 16));
             }
-            printStructure(out, structures[block.sdnaIndex].type, CombType());
-            if (block.count != 1) {
-                out.writeEndElement();
+
+            for (size_t i = 0; i < block.count; i++) {
+                if (block.count != 1) {
+                    out.writeStartElement("elem");
+                }
+                printStructure(out, structures[block.sdnaIndex].type, CombType());
+                if (block.count != 1) {
+                    out.writeEndElement();
+                }
             }
+            out.writeEndElement();
         }
-        out.writeEndElement();
     }
 
     out.writeEndElement();
@@ -202,7 +213,7 @@ void BlendToXml::run()
 QString BlendToXml::readString(std::size_t len)
 {
     std::unique_ptr<char[]> data(new char[len + 1]);
-    stream.readRawData(data.get(), len);
+    stream.readRawData(data.get(), static_cast<int>(len));
     data[len] = '\0';
     return QString(data.get());
 }
@@ -228,21 +239,21 @@ uint64_t BlendToXml::readAddress()
 
 void BlendToXml::skipBytes(std::size_t len)
 {
-    stream.skipRawData(len);
+    stream.skipRawData(static_cast<int>(len));
 }
 
 QByteArray BlendToXml::readBytes(std::size_t len)
 {
     std::unique_ptr<char[]> data(new char[len]);
-    stream.readRawData(data.get(), len);
-    return QByteArray(data.get(), len);
+    stream.readRawData(data.get(), static_cast<int>(len));
+    return QByteArray(data.get(), static_cast<int>(len));
 }
 
 quint16 BlendToXml::readBytesCrc(std::size_t len)
 {
     std::unique_ptr<char[]> data(new char[len]);
-    stream.readRawData(data.get(), len);
-    return qChecksum(data.get(), len);
+    stream.readRawData(data.get(), static_cast<int>(len));
+    return qChecksum(data.get(), static_cast<int>(len));
 }
 
 void BlendToXml::readAlignedIdent(const char *ident)
@@ -264,11 +275,11 @@ void BlendToXml::printStructure(QXmlStreamWriter &out, int typeId, const CombTyp
             for (size_t j = 0; j < type.width; j++) {
                 auto address = readAddress();
                 if (address) {
-#ifdef PRINT_RAW_POINTERS
-                    out.writeCharacters(QString::number(address, 16));
-#else
-                    out.writeCharacters("0xDEADBEEF");
-#endif
+                    if (printRawPointers) {
+                        out.writeCharacters(QString::number(address, 16));
+                    } else {
+                        out.writeCharacters("0xDEADBEEF");
+                    }
                 } else {
                     out.writeCharacters("NULL");
                 }
@@ -276,18 +287,28 @@ void BlendToXml::printStructure(QXmlStreamWriter &out, int typeId, const CombTyp
         }
         return;
     }
-    else if (typestructures[typeId] == -1) {
+
+    if (typestructures[typeId] == NOTYPE) {
+        bool isSingle = type.height == 1 && type.width == 1;
+        bool isFlag = isSingle && (type.shortname.contains("flag") || type.shortname.contains("type"));
+
         if (typenames[typeId] == "char") {
+            if (isSingle) {
+                out.writeAttribute("mode", "flag");
+                out.writeCharacters(QString("0b%1").arg(readType<quint8>(), 0, 2));
+                return;
+            }
+
             QByteArray bytes = readBytes(type.height * type.width);
 
             bool fullprint = true;
             for (size_t i = 0; i < type.height; i++) {
                 for (size_t j = 0; j < type.width; j++) {
-                    uint8_t c = bytes.at(i * type.width + j);
+                    uint8_t c = bytes.at(static_cast<int>(i * type.width + j));
                     QChar qc(c);
                     if (qc.toLatin1() != c || !qc.isPrint()) {
                         for (; j < type.width; j++) {
-                            uint8_t nullc = bytes.at(i * type.width + j);
+                            uint8_t nullc = bytes.at(static_cast<int>(i * type.width + j));
                             if (nullc != '\0') {
                                 fullprint = false;
                                 break;
@@ -300,15 +321,48 @@ void BlendToXml::printStructure(QXmlStreamWriter &out, int typeId, const CombTyp
                 }
             }
             if (fullprint) {
+                out.writeAttribute("mode", "ascii");
                 for (size_t i = 0; i < type.height; i++) {
-                    out.writeStartElement("string");
                     out.writeCharacters(QString(bytes.data() + i * type.width));
-                    out.writeEndElement();
+                }
+            } else if (type.shortname.contains("name") ||
+                       type.shortname.contains("title") ||
+                       type.shortname.contains("filepath") ||
+                       type.shortname.contains("string") ||
+                       type.shortname == "dir" ||
+                       type.shortname == "file" ||
+                       type.shortname.endsWith("str")) {
+                out.writeAttribute("mode", "mixed");
+                for (size_t i = 0; i < type.height; i++) {
+
+                    size_t nonNullCharacters = type.width;
+                    while (nonNullCharacters) {
+                        if (bytes.at(static_cast<int>(i * type.width + nonNullCharacters - 1))) {
+                            break;
+                        }
+                        nonNullCharacters--;
+                    }
+
+                    for (size_t j = 0; j < nonNullCharacters; j++) {
+                        char byte = bytes.at(static_cast<int>(i * type.width + j));
+                        auto ascii = QChar::fromLatin1(byte);
+                        if (byte == '\0') {
+                            out.writeCharacters("\\0");
+                        } else if (byte == '\\') {
+                            out.writeCharacters("\\\\");
+                        } else if (ascii.unicode() <= 127 && ascii.isPrint()) {
+                            out.writeCharacters(ascii);
+                        } else {
+                            out.writeCharacters(QString("\\%1").arg((quint8)byte, 3, 8, QLatin1Char('0')));
+                        }
+                    }
                 }
             } else {
+                out.writeAttribute("mode", "data");
                 for (size_t i = 0; i < type.height; i++) {
                     for (size_t j = 0; j < type.width; j++) {
-                        out.writeCharacters(QString("\\%1").arg((quint8)bytes.at(i * type.width + j), 2, 16, QChar('0')));
+                        char byte = bytes.at(static_cast<int>(i * type.width + j));
+                        out.writeCharacters(QString("%1").arg((quint8)byte, 2, 16, QLatin1Char('0')));
                     }
                 }
             }
@@ -322,23 +376,35 @@ void BlendToXml::printStructure(QXmlStreamWriter &out, int typeId, const CombTyp
                     out.writeCharacters("???");
                     break;
                 case 1:
-                    out.writeCharacters(QString::number(readType<quint8>()));
+                    if (isFlag)
+                        out.writeCharacters(QString("0b%1").arg(readType<quint8>(), 0, 2));
+                    else
+                        out.writeCharacters(QString::number(readType<quint8>()));
                     break;
                 case 2:
-                    out.writeCharacters(QString::number(readType<quint16>()));
+                    if (isFlag)
+                        out.writeCharacters(QString("0b%1").arg(readType<quint16>(), 0, 2));
+                    else
+                        out.writeCharacters(QString::number(readType<quint16>()));
                     break;
                 case 4:
                     if (typenames[typeId] == "float") {
                         out.writeCharacters(QString::number(readType<float>()));
                     } else {
-                        out.writeCharacters(QString::number(readType<quint32>()));
+                        if (isFlag)
+                            out.writeCharacters(QString("0b%1").arg(readType<quint32>(), 0, 2));
+                        else
+                            out.writeCharacters(QString::number(readType<quint32>()));
                     }
                     break;
                 case 8:
                     if (typenames[typeId] == "double") {
                         out.writeCharacters(QString::number(readType<double>()));
                     } else {
-                        out.writeCharacters(QString::number(readType<quint64>()));
+                        if (isFlag)
+                            out.writeCharacters(QString("0b%1").arg(readType<quint64>(), 0, 2));
+                        else
+                            out.writeCharacters(QString::number(readType<quint64>()));
                     }
                     break;
                 default: Q_ASSERT(!"Too long typelength");
@@ -358,6 +424,10 @@ void BlendToXml::printStructure(QXmlStreamWriter &out, int typeId, const CombTyp
             }
             for (const Field &field : structures[typestructures[typeId]].fields) {
                 CombType ct(names[field.name]);
+
+                if (ct.shortname.contains(QRegularExpression("^_*pad\\d*$")))
+                    continue;
+
                 out.writeStartElement(ct.shortname);
                 out.writeAttribute("type", typenames[field.type] + ct.printType);
                 printStructure(out, field.type, ct);
